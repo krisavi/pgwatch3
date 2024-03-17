@@ -2,25 +2,21 @@ CREATE SCHEMA IF NOT EXISTS pgwatch3 AUTHORIZATION pgwatch3;
 SET ROLE TO pgwatch3;
 
 CREATE TABLE IF NOT EXISTS pgwatch3.metric (
-	name text PRIMARY KEY,
-	sqls jsonb NOT NULL,
-	init_sql text,
-	description text,
-	node_status text,
-	gauges text[],
-	is_instance_level bool NOT NULL DEFAULT FALSE,
-	storage_name text
-);
-	
-COMMENT ON COlUMN pgwatch3.metric.node_status IS 'currently supports `primary` and `standby`';
-COmment on column pgwatch3.metric.gauges IS 'comma separated list of gauge metric columns, * if all columns are gauges';
-COMMENT ON COlUMN pgwatch3.metric.is_instance_level IS 'if true, the metric is collected only once per monitored instance';
-COMMENT ON COlUMN pgwatch3.metric.storage_name IS 'data is stored in the specified table/file/sink target instead of the default one';
-
-CREATE TABLE IF NOT EXISTS pgwatch3.preset (
-	name text PRIMARY KEY,
-	description text NOT NULL,
-	metrics jsonb NOT NULL
+    m_id serial PRIMARY KEY,
+    m_name text NOT NULL,
+    m_pg_version_from int NOT NULL,
+    m_sql text NOT NULL,
+    m_comment text,
+    m_is_active boolean NOT NULL DEFAULT 't',
+    m_is_helper boolean NOT NULL DEFAULT 'f',
+    m_last_modified_on timestamptz NOT NULL DEFAULT now(),
+    m_master_only bool NOT NULL DEFAULT FALSE,
+    m_standby_only bool NOT NULL DEFAULT FALSE,
+    m_column_attrs jsonb, -- currently only useful for Prometheus
+    m_sql_su text DEFAULT '',
+    UNIQUE (m_name, m_pg_version_from, m_standby_only),
+    CHECK (NOT (m_master_only AND m_standby_only)),
+    CHECK (m_name ~ E'^[a-z0-9_\\.]+$')
 );
 
 CREATE OR REPLACE FUNCTION pgwatch3.update_preset()
