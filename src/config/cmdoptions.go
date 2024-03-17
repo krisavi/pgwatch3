@@ -125,6 +125,10 @@ func validateConfig(c *Options) error {
 		return errors.New("--max-parallel-connections-per-db must be >= 1")
 	}
 
+	if err := validateAesGcmConfig(c); err != nil {
+		return err
+	}
+
 	// validate that input is boolean is set
 	if c.Measurements.BatchingDelay <= 0 || c.Measurements.BatchingDelay > time.Hour {
 		return errors.New("--batching-delay-ms must be between 0 and 3600000")
