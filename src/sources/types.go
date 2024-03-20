@@ -37,6 +37,7 @@ type MonitoredDatabase struct {
 	DBUniqueName         string             `yaml:"unique_name" db:"name"`
 	DBUniqueNameOrig     string             // to preserve belonging to a specific instance for continuous modes where DBUniqueName will be dynamic
 	Group                string             `yaml:"group" db:"group"`
+	Encryption           string             `yaml:"encryption" db:"encryption"`
 	ConnStr              string             `yaml:"conn_str" db:"connstr"`
 	Metrics              map[string]float64 `yaml:"custom_metrics" db:"config"`
 	MetricsStandby       map[string]float64 `yaml:"custom_metrics_standby" db:"config_standby"`
@@ -50,8 +51,6 @@ type MonitoredDatabase struct {
 	CustomTags           map[string]string  `yaml:"custom_tags" db:"custom_tags"`
 	HostConfig           HostConfigAttrs    `yaml:"host_config" db:"host_config"`
 	OnlyIfMaster         bool               `yaml:"only_if_master" db:"only_if_master"`
-
-	Conn db.PgxPoolIface
 }
 
 func (md *MonitoredDatabase) Connect(ctx context.Context) (err error) {

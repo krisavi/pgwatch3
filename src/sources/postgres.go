@@ -7,21 +7,41 @@ import (
 	pgx "github.com/jackc/pgx/v5"
 )
 
-func NewPostgresSourcesReaderWriter(ctx context.Context, conn db.PgxPoolIface) (ReaderWriter, error) {
-	return &dbSourcesReaderWriter{
+func NewPostgresSourcesReader(ctx context.Context, conn db.PgxPoolIface, opts *config.Options) (Reader, error) {
+	return &dbSourcesReader{
 		ctx:      ctx,
 		configDb: conn,
+		opts:     opts,
 	}, conn.Ping(ctx)
 
 }
 
-type dbSourcesReaderWriter struct {
+type dbSourcesReader struct {
 	ctx      context.Context
-	configDb db.PgxIface
+	configDb db.Querier
+	opts     *config.Options
 }
 
-func (r *dbSourcesReaderWriter) WriteMonitoredDatabases(dbs MonitoredDatabases) error {
-	tx, err := r.configDb.Begin(context.Background())
+func (r *dbSourcesReader) GetMonitoredDatabases() (dbs MonitoredDatabases, err error) {
+	sqlLatest := `select /* pgwatch3_generated */
+	s.name, 
+	"group", 
+	dbtype, 
+	connstr,
+	coalesce(pr.metrics, config) as config, 
+	coalesce(st.metrics, config_standby, '{}'::jsonb) as config_standby,
+	is_superuser,
+	coalesce(include_pattern, '') as include_pattern, 
+	coalesce(exclude_pattern, '') as exclude_pattern,
+	coalesce(custom_tags, '{}'::jsonb) as custom_tags, 
+	encryption, coalesce(host_config, '{}') as host_config, 
+	only_if_master
+from
+	pgwatch3.source s
+	left join pgwatch3.preset pr on pr.name = preset_config
+	left join pgwatch3.preset st on st.name = preset_config_standby
+`
+	rows, err := r.configDb.Query(context.Background(), sqlLatest)
 	if err != nil {
 		return err
 	}
