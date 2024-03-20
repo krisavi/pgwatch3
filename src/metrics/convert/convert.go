@@ -42,8 +42,7 @@ type (
 	Metric struct {
 		SQLs        SQLs
 		InitSQL     string   `yaml:"init_sql,omitempty"`
-		MasterOnly  bool     `yaml:",omitempty"`
-		StandbyOnly bool     `yaml:",omitempty"`
+		NodeStatus  string   `yaml:"node_status,omitempty"`
 		Gauges      []string `yaml:",omitempty"`
 		MetricAttrs `yaml:",inline,omitempty"`
 	}
