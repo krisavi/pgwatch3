@@ -27,6 +27,7 @@ type (
 
 	Metric struct {
 		SQLs            SQLs
+		Enabled         bool     `yaml:",omitempty"`
 		InitSQL         string   `yaml:"init_sql,omitempty"`
 		NodeStatus      string   `yaml:"node_status,omitempty"`
 		Gauges          []string `yaml:",omitempty"`
@@ -105,17 +106,4 @@ type ControlMessage struct {
 
 type Reader interface {
 	GetMetrics() (*Metrics, error)
-}
-
-type Writer interface {
-	WriteMetrics(metricDefs *Metrics) error
-	DeleteMetric(metricName string) error
-	DeletePreset(presetName string) error
-	UpdateMetric(metricName string, metric Metric) error
-	UpdatePreset(presetName string, preset Preset) error
-}
-
-type ReaderWriter interface {
-	Reader
-	Writer
 }
