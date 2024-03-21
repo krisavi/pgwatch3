@@ -14,9 +14,24 @@ import (
 
 	"github.com/cybertec-postgresql/pgwatch3/config"
 	"github.com/cybertec-postgresql/pgwatch3/log"
-	"github.com/cybertec-postgresql/pgwatch3/metrics"
-	"github.com/cybertec-postgresql/pgwatch3/sources"
 )
+
+type apiHandler interface {
+	GetDatabases() (string, error)
+	DeleteDatabase(id string) error
+	UpdateDatabase(id string, params []byte) error
+
+	GetMetrics() (res string, err error)
+	DeleteMetric(name string) error
+	UpdateMetric(name string, params []byte) error
+
+	GetPresets() (res string, err error)
+	DeletePreset(name string) error
+	UpdatePreset(name string, params []byte) error
+
+	GetStats() string
+	TryConnectToDB(params []byte) error
+}
 
 type WebUIServer struct {
 	l log.LoggerIface

@@ -31,17 +31,19 @@ func (Server *WebUIServer) handleMetrics(w http.ResponseWriter, r *http.Request)
 		if params, err = io.ReadAll(r.Body); err != nil {
 			return
 		}
-		err = Server.UpdateMetric(r.URL.Query().Get("name"), params)
+		err = Server.api.UpdateMetric(r.URL.Query().Get("name"), params)
 
 	case http.MethodDelete:
 		// delete stored metric
-		err = Server.DeleteMetric(r.URL.Query().Get("name"))
+		err = Server.api.DeleteMetric(r.URL.Query().Get("name"))
 
 	case http.MethodOptions:
+		w.Header().Set("Allow", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Allow", "GET, POST, DELETE, OPTIONS")
 		w.WriteHeader(http.StatusNoContent)
 
 	default:
+		w.Header().Set("Allow", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Allow", "GET, POST, DELETE, OPTIONS")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

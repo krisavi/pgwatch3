@@ -23,21 +23,23 @@ func (Server *WebUIServer) handleDBs(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := Server.UpdateDatabase(p); err != nil {
+		if err := Server.api.UpdateDatabase(r.URL.Query().Get("name"), p); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		}
 
 	case http.MethodDelete:
 		// delete monitored database
-		if err := Server.DeleteDatabase(r.URL.Query().Get("name")); err != nil {
+		if err := Server.api.DeleteDatabase(r.URL.Query().Get("name")); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		}
 
 	case http.MethodOptions:
 		w.Header().Set("Allow", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Allow", "GET, POST, DELETE, OPTIONS")
 		w.WriteHeader(http.StatusNoContent)
 
 	default:
+		w.Header().Set("Allow", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Allow", "GET, POST, DELETE, OPTIONS")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
