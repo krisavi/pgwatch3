@@ -94,9 +94,6 @@ func (fcr *fileSourcesReader) getMonitoredDatabases(configFilePath string) (dbs 
 }
 
 func (fcr *fileSourcesReader) expandEnvVars(md MonitoredDatabase) MonitoredDatabase {
-	if strings.HasPrefix(md.Encryption, "$") {
-		md.Encryption = os.ExpandEnv(md.Encryption)
-	}
 	if strings.HasPrefix(string(md.Kind), "$") {
 		md.Kind = Kind(os.ExpandEnv(string(md.Kind)))
 	}

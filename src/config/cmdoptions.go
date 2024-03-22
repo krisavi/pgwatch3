@@ -115,7 +115,7 @@ func (c Options) GetConfigKind() (_ Kind, err error) {
 }
 
 func validateConfig(c *Options) error {
-	if c.Sources.Config == "" && !c.VersionOnly() {
+	if c.Sources.Config == "" {
 		return errors.New("--config was not specified")
 	}
 	if c.Sources.Refresh <= 1 {
@@ -123,10 +123,6 @@ func validateConfig(c *Options) error {
 	}
 	if c.Sources.MaxParallelConnectionsPerDb < 1 {
 		return errors.New("--max-parallel-connections-per-db must be >= 1")
-	}
-
-	if err := validateAesGcmConfig(c); err != nil {
-		return err
 	}
 
 	// validate that input is boolean is set
