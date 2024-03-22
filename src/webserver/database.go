@@ -23,13 +23,13 @@ func (Server *WebUIServer) handleDBs(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := Server.api.UpdateDatabase(p); err != nil {
+		if err := Server.UpdateDatabase(p); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		}
 
 	case http.MethodDelete:
 		// delete monitored database
-		if err := Server.api.DeleteDatabase(r.URL.Query().Get("name")); err != nil {
+		if err := Server.DeleteDatabase(r.URL.Query().Get("name")); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		}
 

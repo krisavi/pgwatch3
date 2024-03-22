@@ -88,7 +88,11 @@ func (server *WebUIServer) UpdateDatabase(params []byte) error {
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	return server.sourcesReaderWriter.UpdateDatabase(&md)
+=======
+	return server.sourcesReaderWriter.UpdateDatabase(md)
+>>>>>>> 9060324 ([*] get rid of api.go, move everything webui related to webserver)
 }
 
 // GetStats
