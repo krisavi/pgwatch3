@@ -51,6 +51,10 @@ func parseHostAndPortFromJdbcConnStr(connStr string) (string, string, error) {
 	return matches[1], matches[2], nil
 }
 
+func getConsulClusterMembers(database MonitoredDatabase) ([]PatroniClusterMember, error) {
+	return nil, nil
+}
+
 func jsonTextToStringMap(jsonText string) (map[string]string, error) {
 	retmap := make(map[string]string)
 	if jsonText == "" {
@@ -190,6 +194,10 @@ func extractEtcdScopeMembers(database *MonitoredDatabase, scope string, kapi cli
 		ret = append(ret, PatroniClusterMember{Scope: scope, ConnURL: connURL, Role: role, Name: name})
 	}
 	return ret, nil
+}
+
+func getZookeeperClusterMembers(database MonitoredDatabase) ([]PatroniClusterMember, error) {
+	return nil, errors.ErrUnsupported
 }
 
 const (
