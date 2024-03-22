@@ -33,11 +33,11 @@ var logger log.LoggerIface = log.FallbackLogger
 var lastFoundClusterMembers = make(map[string][]PatroniClusterMember) // needed for cases where DCS is temporarily down
 // don't want to immediately remove monitoring of DBs
 
-func getConsulClusterMembers(*MonitoredDatabase) ([]PatroniClusterMember, error) {
+func getConsulClusterMembers(MonitoredDatabase) ([]PatroniClusterMember, error) {
 	return nil, errors.ErrUnsupported
 }
 
-func getZookeeperClusterMembers(*MonitoredDatabase) ([]PatroniClusterMember, error) {
+func getZookeeperClusterMembers(MonitoredDatabase) ([]PatroniClusterMember, error) {
 	return nil, errors.ErrUnsupported
 }
 
@@ -49,10 +49,6 @@ func parseHostAndPortFromJdbcConnStr(connStr string) (string, string, error) {
 		return "", "", fmt.Errorf("unexpected regex result groups: %v", matches)
 	}
 	return matches[1], matches[2], nil
-}
-
-func getConsulClusterMembers(database MonitoredDatabase) ([]PatroniClusterMember, error) {
-	return nil, nil
 }
 
 func jsonTextToStringMap(jsonText string) (map[string]string, error) {
@@ -194,10 +190,6 @@ func extractEtcdScopeMembers(database *MonitoredDatabase, scope string, kapi cli
 		ret = append(ret, PatroniClusterMember{Scope: scope, ConnURL: connURL, Role: role, Name: name})
 	}
 	return ret, nil
-}
-
-func getZookeeperClusterMembers(database MonitoredDatabase) ([]PatroniClusterMember, error) {
-	return nil, errors.ErrUnsupported
 }
 
 const (
