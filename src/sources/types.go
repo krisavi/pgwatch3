@@ -197,7 +197,7 @@ type Reader interface {
 type Writer interface {
 	WriteMonitoredDatabases(MonitoredDatabases) error
 	DeleteDatabase(string) error
-	UpdateDatabase(md *MonitoredDatabase) error
+	UpdateDatabase(name string, md MonitoredDatabase) error
 }
 
 type ReaderWriter interface {

@@ -5,19 +5,20 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
-func NewYAMLSourcesReader(ctx context.Context, opts *config.Options) (Reader, error) {
-	return &fileSourcesReader{
+func NewYAMLSourcesReaderWriter(ctx context.Context, path string) (ReaderWriter, error) {
+	return &fileSourcesReaderWriter{
 		ctx:  ctx,
 		path: path,
 	}, nil
 }
 
-type fileSourcesReader struct {
+type fileSourcesReaderWriter struct {
 	ctx  context.Context
 	path string
 }
@@ -30,13 +31,13 @@ func (fcr *fileSourcesReaderWriter) WriteMonitoredDatabases(mds MonitoredDatabas
 	return os.WriteFile(fcr.path, yamlData, 0644)
 }
 
-func (fcr *fileSourcesReaderWriter) UpdateDatabase(md *MonitoredDatabase) error {
+func (fcr *fileSourcesReaderWriter) UpdateDatabase(name string, md MonitoredDatabase) error {
 	dbs, err := fcr.GetMonitoredDatabases()
 	if err != nil {
 		return err
 	}
 	for i, db := range dbs {
-		if db.DBUniqueName == md.DBUniqueName {
+		if db.DBUniqueName == name {
 			dbs[i] = md
 			return fcr.WriteMonitoredDatabases(dbs)
 		}
@@ -45,7 +46,16 @@ func (fcr *fileSourcesReaderWriter) UpdateDatabase(md *MonitoredDatabase) error 
 	return fcr.WriteMonitoredDatabases(dbs)
 }
 
-func (fcr *fileSourcesReader) GetMonitoredDatabases() (dbs MonitoredDatabases, err error) {
+func (fcr *fileSourcesReaderWriter) DeleteDatabase(name string) error {
+	dbs, err := fcr.GetMonitoredDatabases()
+	if err != nil {
+		return err
+	}
+	dbs = slices.DeleteFunc(dbs, func(md MonitoredDatabase) bool { return md.DBUniqueName == name })
+	return fcr.WriteMonitoredDatabases(dbs)
+}
+
+func (fcr *fileSourcesReaderWriter) GetMonitoredDatabases() (dbs MonitoredDatabases, err error) {
 	var fi fs.FileInfo
 	if fi, err = os.Stat(fcr.path); err != nil {
 		return
@@ -75,7 +85,7 @@ func (fcr *fileSourcesReader) GetMonitoredDatabases() (dbs MonitoredDatabases, e
 	return
 }
 
-func (fcr *fileSourcesReader) getMonitoredDatabases(configFilePath string) (dbs MonitoredDatabases, err error) {
+func (fcr *fileSourcesReaderWriter) getMonitoredDatabases(configFilePath string) (dbs MonitoredDatabases, err error) {
 	var yamlFile []byte
 	if yamlFile, err = os.ReadFile(configFilePath); err != nil {
 		return
@@ -93,7 +103,7 @@ func (fcr *fileSourcesReader) getMonitoredDatabases(configFilePath string) (dbs 
 	return
 }
 
-func (fcr *fileSourcesReader) expandEnvVars(md MonitoredDatabase) MonitoredDatabase {
+func (fcr *fileSourcesReaderWriter) expandEnvVars(md MonitoredDatabase) MonitoredDatabase {
 	if strings.HasPrefix(string(md.Kind), "$") {
 		md.Kind = Kind(os.ExpandEnv(string(md.Kind)))
 	}
