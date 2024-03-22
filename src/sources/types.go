@@ -83,7 +83,7 @@ func (md *MonitoredDatabase) ExpandDatabases() (MonitoredDatabases, error) {
 }
 
 // "resolving" reads all the DB names from the given host/port, additionally matching/not matching specified regex patterns
-func (md *MonitoredDatabase) ResolveDatabasesFromPostgres() (resolvedDbs MonitoredDatabases, err error) {
+func (md MonitoredDatabase) ResolveDatabasesFromPostgres() (resolvedDbs MonitoredDatabases, err error) {
 	var (
 		c      db.PgxPoolIface
 		dbname string
@@ -122,7 +122,7 @@ func (md *MonitoredDatabase) ResolveDatabasesFromPostgres() (resolvedDbs Monitor
 	return
 }
 
-type MonitoredDatabases []*MonitoredDatabase
+type MonitoredDatabases []MonitoredDatabase
 
 // Expand() updates list of monitored objects from continuous monitoring sources, e.g. patroni
 func (mds MonitoredDatabases) Expand() (MonitoredDatabases, error) {
@@ -197,7 +197,7 @@ type Reader interface {
 type Writer interface {
 	WriteMonitoredDatabases(MonitoredDatabases) error
 	DeleteDatabase(string) error
-	UpdateDatabase(name string, md MonitoredDatabase) error
+	UpdateDatabase(md MonitoredDatabase) error
 }
 
 type ReaderWriter interface {
