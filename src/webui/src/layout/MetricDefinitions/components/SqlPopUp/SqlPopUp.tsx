@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import TableViewIcon from '@mui/icons-material/TableView';
 import { Dialog, DialogContent, DialogTitle, IconButton, Tooltip } from "@mui/material";
-import { DataGrid } from "@mui/x-data-grid";
+import { DataGrid, gridClasses } from "@mui/x-data-grid";
 import { columns } from "./SqlPopUp.consts";
 
 type SQLRows = {
@@ -23,9 +23,10 @@ export const SqlPopUp = ({ SQLs }: Props) => {
     }));
   }, [SQLs]);
 
-  const handleOpen = () => setOpen(true);
+  const handleOpen = () => setOpen(true)
 
-  const handleClose = () => setOpen(false);
+  const handleClose = () => setOpen(false)
+  console.log(rows);
 
   return rows.length !== 0 ? (
     <>

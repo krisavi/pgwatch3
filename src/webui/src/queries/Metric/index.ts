@@ -3,11 +3,13 @@ import { QueryKeys } from "consts/queryKeys";
 import { Metrics } from "types/Metric/Metric";
 import { MetricRequestBody } from "types/Metric/MetricRequestBody";
 import MetricService from "services/Metric";
+import { createMetricForm, updateMetricForm } from "../types/MetricTypes";
+import { Metrics } from "layout/MetricDefinitions/MetricDefinitions.types";
 
 const services = MetricService.getInstance();
 
 export const useMetrics = () => useQuery<Metrics>({
-  queryKey: [QueryKeys.Metric],
+  queryKey: QueryKeys.metric,
   queryFn: async () => await services.getMetrics()
 });
 

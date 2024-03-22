@@ -1,9 +1,10 @@
-import CheckIcon from '@mui/icons-material/Check';
 import { GridColDef } from "@mui/x-data-grid";
+import { UseMutationResult } from "@tanstack/react-query";
 import { MetricRow } from "./MetricDefinitions.types";
+import CheckIcon from '@mui/icons-material/Check';
 import { SqlPopUp } from "./components/SqlPopUp/SqlPopUp";
 
-const getIcon = (value: boolean) => value && <CheckIcon color="success" />;
+const getIcon = (value: boolean) => value && <CheckIcon color="success" />
 
 export const metricsColumns = (): GridColDef<MetricRow>[] => ([
   {
@@ -77,4 +78,4 @@ export const metricsColumns = (): GridColDef<MetricRow>[] => ([
     headerAlign: "center",
     renderCell: ({ row }) => <SqlPopUp SQLs={row.Metric.SQLs} />,
   }
-]);
+])

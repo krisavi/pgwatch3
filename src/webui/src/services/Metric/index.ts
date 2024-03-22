@@ -1,6 +1,6 @@
 import { axiosInstance } from "axiosInstance";
-import { Metrics } from "types/Metric/Metric";
-import { MetricRequestBody } from "types/Metric/MetricRequestBody";
+import { Metrics } from "layout/MetricDefinitions/MetricDefinitions.types";
+import { Metric, createMetricForm, updateMetricForm } from "queries/types/MetricTypes";
 
 
 export default class MetricService {
