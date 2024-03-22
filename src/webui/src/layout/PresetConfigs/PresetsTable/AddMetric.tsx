@@ -49,7 +49,7 @@ export const AddMetric = ({ control, handleValidate }: Props) => {
     );
   }
 
-  const isOptionExist = (_initialValue: string) => {
+  const isOptionExist = (initialValue: string) => {
     /*const value = data.find(option => option.m_name === initialValue);
     if (!value) {
       return ("This option doesn't exist");
