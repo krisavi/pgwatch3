@@ -50,6 +50,8 @@ type MonitoredDatabase struct {
 	CustomTags           map[string]string  `yaml:"custom_tags" db:"custom_tags"`
 	HostConfig           HostConfigAttrs    `yaml:"host_config" db:"host_config"`
 	OnlyIfMaster         bool               `yaml:"only_if_master" db:"only_if_master"`
+
+	Conn db.PgxPoolIface
 }
 
 func (md *MonitoredDatabase) Connect(ctx context.Context) (err error) {
@@ -83,7 +85,7 @@ func (md *MonitoredDatabase) ExpandDatabases() (MonitoredDatabases, error) {
 }
 
 // "resolving" reads all the DB names from the given host/port, additionally matching/not matching specified regex patterns
-func (md MonitoredDatabase) ResolveDatabasesFromPostgres() (resolvedDbs MonitoredDatabases, err error) {
+func (md *MonitoredDatabase) ResolveDatabasesFromPostgres() (resolvedDbs MonitoredDatabases, err error) {
 	var (
 		c      db.PgxPoolIface
 		dbname string
@@ -122,7 +124,7 @@ func (md MonitoredDatabase) ResolveDatabasesFromPostgres() (resolvedDbs Monitore
 	return
 }
 
-type MonitoredDatabases []MonitoredDatabase
+type MonitoredDatabases []*MonitoredDatabase
 
 // Expand() updates list of monitored objects from continuous monitoring sources, e.g. patroni
 func (mds MonitoredDatabases) Expand() (MonitoredDatabases, error) {
@@ -197,7 +199,7 @@ type Reader interface {
 type Writer interface {
 	WriteMonitoredDatabases(MonitoredDatabases) error
 	DeleteDatabase(string) error
-	UpdateDatabase(md MonitoredDatabase) error
+	UpdateDatabase(md *MonitoredDatabase) error
 }
 
 type ReaderWriter interface {

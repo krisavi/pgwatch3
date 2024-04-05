@@ -33,11 +33,11 @@ var logger log.LoggerIface = log.FallbackLogger
 var lastFoundClusterMembers = make(map[string][]PatroniClusterMember) // needed for cases where DCS is temporarily down
 // don't want to immediately remove monitoring of DBs
 
-func getConsulClusterMembers(MonitoredDatabase) ([]PatroniClusterMember, error) {
+func getConsulClusterMembers(*MonitoredDatabase) ([]PatroniClusterMember, error) {
 	return nil, errors.ErrUnsupported
 }
 
-func getZookeeperClusterMembers(MonitoredDatabase) ([]PatroniClusterMember, error) {
+func getZookeeperClusterMembers(*MonitoredDatabase) ([]PatroniClusterMember, error) {
 	return nil, errors.ErrUnsupported
 }
 
