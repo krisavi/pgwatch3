@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { Box, Button, IconButton, InputAdornment, Stack, TextField, Tooltip } from "@mui/material";
 
@@ -22,14 +22,16 @@ export const AddMetric = ({ control, handleValidate }: Props) => {
     name: "pc_config",
     control
   });
-  const [metricOptions, setMetricOptions] = useState<{ label: string }[]>([]);
+  const [metricOptions, _setMetricOptions] = useState<{ label: string }[]>([]);
 
-  const { data, status, error } = useMetrics();
+  const { data: _data, status, error } = useMetrics();
 
+  /*useEffect(() => {
   /*useEffect(() => {
     if (data) {
       setMetricOptions([...new Set(data.map(metric => metric.m_name))].map(metric => ({ label: metric })));
     }
+  }, [data]);*/
   }, [data]);*/
 
   if (status === "error") {
@@ -47,12 +49,14 @@ export const AddMetric = ({ control, handleValidate }: Props) => {
     );
   }
 
-  const isOptionExist = (initialValue: string) => {
+  const isOptionExist = (_initialValue: string) => {
     /*const value = data.find(option => option.m_name === initialValue);
     if (!value) {
       return ("This option doesn't exist");
     } else {
       return;
+    }*/
+    return "This option doesn't exist";
     }*/
     return "This option doesn't exist";
   };

@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"maps"
 	"math"
 	"net/http"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/cybertec-postgresql/pgwatch3/config"
+	"github.com/cybertec-postgresql/pgwatch3/db"
 	"github.com/cybertec-postgresql/pgwatch3/db"
 	"github.com/cybertec-postgresql/pgwatch3/log"
 	"github.com/cybertec-postgresql/pgwatch3/metrics"
@@ -53,9 +55,11 @@ type DBVersionMapEntry struct {
 	IsInRecovery     bool
 	VersionStr       string
 	Version          int
+	Version          int
 	RealDbname       string
 	SystemIdentifier string
 	IsSuperuser      bool // if true and no helpers are installed, use superuser SQL version of metric if available
+	Extensions       map[string]int
 	Extensions       map[string]int
 	ExecEnv          string
 	ApproxDBSizeB    int64
@@ -108,15 +112,16 @@ const (
 var specialMetrics = map[string]bool{recoMetricName: true, specialMetricChangeEvents: true, specialMetricServerLogEventCounts: true}
 var directlyFetchableOSMetrics = map[string]bool{metricPsutilCPU: true, metricPsutilDisk: true, metricPsutilDiskIoTotal: true, metricPsutilMem: true, metricCPULoad: true}
 var metricDefinitionMap metrics.Metrics
+var metricDefinitionMap metrics.Metrics
 var metricDefMapLock = sync.RWMutex{}
 var hostMetricIntervalMap = make(map[string]float64) // [db1_metric] = 30
 var dbPgVersionMap = make(map[string]DBVersionMapEntry)
 var dbPgVersionMapLock = sync.RWMutex{}
 var dbGetPgVersionMapLock = make(map[string]*sync.RWMutex) // synchronize initial PG version detection to 1 instance for each defined host
 var monitoredDbCache map[string]*sources.MonitoredDatabase
+var monitoredDbCache map[string]*sources.MonitoredDatabase
 var monitoredDbCacheLock sync.RWMutex
 
-var monitoredDbConnCacheLock = sync.RWMutex{}
 var lastSQLFetchError sync.Map
 
 // / internal statistics calculation
@@ -137,11 +142,14 @@ var PGDummyMetricTablesLock = sync.RWMutex{}
 
 // var failedInitialConnectHosts = make(map[string]bool) // hosts that couldn't be connected to even once
 
+// var failedInitialConnectHosts = make(map[string]bool) // hosts that couldn't be connected to even once
+
 var lastMonitoredDBsUpdate time.Time
 var instanceMetricCache = make(map[string](metrics.Measurements)) // [dbUnique+metric]lastly_fetched_data
 var instanceMetricCacheLock = sync.RWMutex{}
 var instanceMetricCacheTimestamp = make(map[string]time.Time) // [dbUnique+metric]last_fetch_time
 var instanceMetricCacheTimestampLock = sync.RWMutex{}
+var MinExtensionInfoAvailable = 9_01_00
 var MinExtensionInfoAvailable = 9_01_00
 var regexIsAlpha = regexp.MustCompile("^[a-zA-Z]+$")
 var rBouncerAndPgpoolVerMatch = regexp.MustCompile(`\d+\.+\d+`) // extract $major.minor from "4.1.2 (karasukiboshi)" or "PgBouncer 1.12.0"
@@ -149,11 +157,14 @@ var regexIsPgbouncerMetrics = regexp.MustCompile(specialMetricPgbouncer)
 var unreachableDBsLock sync.RWMutex
 var unreachableDB = make(map[string]time.Time)
 var pgBouncerNumericCountersStartVersion = 01_12_00 // pgBouncer changed internal counters data type in v1.12
+var pgBouncerNumericCountersStartVersion = 01_12_00 // pgBouncer changed internal counters data type in v1.12
 
 var lastDBSizeMB = make(map[string]int64)
 var lastDBSizeFetchTime = make(map[string]time.Time) // cached for DB_SIZE_CACHING_INTERVAL
 var lastDBSizeCheckLock sync.RWMutex
 
+var prevLoopMonitoredDBs sources.MonitoredDatabases // to be able to detect DBs removed from config
+var undersizedDBs = make(map[string]bool)           // DBs below the --min-db-size-mb limit, if set
 var prevLoopMonitoredDBs sources.MonitoredDatabases // to be able to detect DBs removed from config
 var undersizedDBs = make(map[string]bool)           // DBs below the --min-db-size-mb limit, if set
 var undersizedDBsLock = sync.RWMutex{}
@@ -176,7 +187,19 @@ func VersionToInt(version string) (v int) {
 	}
 	return
 }
+// Examples: v1.2 -> 01_02_00, v9.6.3 -> 09_06_03, v11 -> 11_00_00
+var regVer = regexp.MustCompile(`(\d+).?(\d*).?(\d*)`)
 
+func VersionToInt(version string) (v int) {
+	if matches := regVer.FindStringSubmatch(version); len(matches) > 1 {
+		for i, match := range matches[1:] {
+			v += func() (m int) { m, _ = strconv.Atoi(match); return }() * int(math.Pow10(4-i*2))
+		}
+	}
+	return
+}
+
+func InitPGVersionInfoFetchingLockIfNil(md *sources.MonitoredDatabase) {
 func InitPGVersionInfoFetchingLockIfNil(md *sources.MonitoredDatabase) {
 	dbPgVersionMapLock.Lock()
 	if _, ok := dbGetPgVersionMapLock[md.DBUniqueName]; !ok {
@@ -186,15 +209,22 @@ func InitPGVersionInfoFetchingLockIfNil(md *sources.MonitoredDatabase) {
 }
 
 func GetMonitoredDatabaseByUniqueName(name string) (*sources.MonitoredDatabase, error) {
+func GetMonitoredDatabaseByUniqueName(name string) (*sources.MonitoredDatabase, error) {
 	monitoredDbCacheLock.RLock()
 	defer monitoredDbCacheLock.RUnlock()
 	md, exists := monitoredDbCache[name]
 	if !exists || md == nil {
 		return nil, fmt.Errorf("Database %s not found in cache", name)
+	md, exists := monitoredDbCache[name]
+	if !exists || md == nil {
+		return nil, fmt.Errorf("Database %s not found in cache", name)
 	}
+	return md, nil
 	return md, nil
 }
 
+func UpdateMonitoredDBCache(data sources.MonitoredDatabases) {
+	monitoredDbCacheNew := make(map[string]*sources.MonitoredDatabase)
 func UpdateMonitoredDBCache(data sources.MonitoredDatabases) {
 	monitoredDbCacheNew := make(map[string]*sources.MonitoredDatabase)
 	for _, row := range data {
@@ -208,10 +238,13 @@ func UpdateMonitoredDBCache(data sources.MonitoredDatabases) {
 // assumes upwards compatibility for versions
 func GetMetricVersionProperties(metric string, _ DBVersionMapEntry, metricDefMap *metrics.Metrics) (metrics.Metric, error) {
 	mdm := new(metrics.Metrics)
+func GetMetricVersionProperties(metric string, _ DBVersionMapEntry, metricDefMap *metrics.Metrics) (metrics.Metric, error) {
+	mdm := new(metrics.Metrics)
 	if metricDefMap != nil {
 		mdm = metricDefMap
 	} else {
 		metricDefMapLock.RLock()
+		mdm.MetricDefs = maps.Clone(metricDefinitionMap.MetricDefs) // copy of global cache
 		mdm.MetricDefs = maps.Clone(metricDefinitionMap.MetricDefs) // copy of global cache
 		metricDefMapLock.RUnlock()
 	}
@@ -221,13 +254,21 @@ func GetMetricVersionProperties(metric string, _ DBVersionMapEntry, metricDefMap
 
 func GetAllRecoMetricsForVersion(vme DBVersionMapEntry) map[string]metrics.Metric {
 	mvpMap := make(map[string]metrics.Metric)
+	return mdm.MetricDefs[metric], nil
+}
+
+func GetAllRecoMetricsForVersion(vme DBVersionMapEntry) map[string]metrics.Metric {
+	mvpMap := make(map[string]metrics.Metric)
 	metricDefMapLock.RLock()
 	defer metricDefMapLock.RUnlock()
 	for m := range metricDefinitionMap.MetricDefs {
+	for m := range metricDefinitionMap.MetricDefs {
 		if strings.HasPrefix(m, recoPrefix) {
+			mvp, err := GetMetricVersionProperties(m, vme, &metricDefinitionMap)
 			mvp, err := GetMetricVersionProperties(m, vme, &metricDefinitionMap)
 			if err != nil {
 				logger.Warningf("Could not get SQL definition for metric \"%s\", PG %s", m, vme.VersionStr)
+			} else {
 			} else {
 				mvpMap[m] = mvp
 			}
@@ -244,6 +285,7 @@ func GetRecommendations(dbUnique string, vme DBVersionMapEntry) (metrics.Measure
 	logger.Debugf("Processing %d recommendation metrics for \"%s\"", len(recoMetrics), dbUnique)
 
 	for m, mvp := range recoMetrics {
+		data, err := DBExecReadByDbUniqueName(mainContext, dbUnique, mvp.GetSQL(vme.Version))
 		data, err := DBExecReadByDbUniqueName(mainContext, dbUnique, mvp.GetSQL(vme.Version))
 		if err != nil {
 			if strings.Contains(err.Error(), "does not exist") { // some more exotic extensions missing is expected, don't pollute the error log
@@ -311,10 +353,19 @@ func FetchMetrics(ctx context.Context, msg MetricFetchMessage, hostState map[str
 	var vme DBVersionMapEntry
 	var dbpgVersion int
 	var err error
+	var dbpgVersion int
+	var err error
 	var sql string
 	var data, cachedData metrics.Measurements
 	var md *sources.MonitoredDatabase
+	var md *sources.MonitoredDatabase
 	var fromCache, isCacheable bool
+
+	md, err = GetMonitoredDatabaseByUniqueName(msg.DBUniqueName)
+	if err != nil {
+		logger.Errorf("[%s:%s] could not get monitored DB details", msg.DBUniqueName, err)
+		return nil, err
+	}
 
 	md, err = GetMonitoredDatabaseByUniqueName(msg.DBUniqueName)
 	if err != nil {
@@ -331,6 +382,7 @@ func FetchMetrics(ctx context.Context, msg MetricFetchMessage, hostState map[str
 		if vme.ExecEnv == execEnvAzureSingle && vme.ApproxDBSizeB > 1e12 { // 1TB
 			subsMetricName := msg.MetricName + "_approx"
 			mvpApprox, err := GetMetricVersionProperties(subsMetricName, vme, nil)
+			if err == nil && mvpApprox.StorageName == msg.MetricName {
 			if err == nil && mvpApprox.StorageName == msg.MetricName {
 				logger.Infof("[%s:%s] Transparently swapping metric to %s due to hard-coded rules...", msg.DBUniqueName, msg.MetricName, subsMetricName)
 				msg.MetricName = subsMetricName
@@ -367,12 +419,15 @@ func FetchMetrics(ctx context.Context, msg MetricFetchMessage, hostState map[str
 
 	sql = mvp.GetSQL(dbpgVersion)
 
+	sql = mvp.GetSQL(dbpgVersion)
+
 	if sql == "" && !(msg.MetricName == specialMetricChangeEvents || msg.MetricName == recoMetricName) {
 		// let's ignore dummy SQL-s
 		logger.Debugf("[%s:%s] Ignoring fetch message - got an empty/dummy SQL string", msg.DBUniqueName, msg.MetricName)
 		return nil, nil
 	}
 
+	if (mvp.MasterOnly() && vme.IsInRecovery) || (mvp.StandbyOnly() && !vme.IsInRecovery) {
 	if (mvp.MasterOnly() && vme.IsInRecovery) || (mvp.StandbyOnly() && !vme.IsInRecovery) {
 		logger.Debugf("[%s:%s] Skipping fetching of  as server not in wanted state (IsInRecovery=%v)", msg.DBUniqueName, msg.MetricName, vme.IsInRecovery)
 		return nil, nil
@@ -441,6 +496,9 @@ send_to_storageChannel:
 		data = AddDbnameSysinfoIfNotExistsToQueryResultData(msg, data, ver)
 	}
 
+	if mvp.StorageName != "" {
+		logger.Debugf("[%s] rerouting metric %s data to %s based on metric attributes", msg.DBUniqueName, msg.MetricName, mvp.StorageName)
+		msg.MetricName = mvp.StorageName
 	if mvp.StorageName != "" {
 		logger.Debugf("[%s] rerouting metric %s data to %s based on metric attributes", msg.DBUniqueName, msg.MetricName, mvp.StorageName)
 		msg.MetricName = mvp.StorageName
@@ -516,9 +574,11 @@ func PutToInstanceCache(msg MetricFetchMessage, data metrics.Measurements) {
 }
 
 func IsCacheableMetric(msg MetricFetchMessage, mvp metrics.Metric) bool {
+func IsCacheableMetric(msg MetricFetchMessage, mvp metrics.Metric) bool {
 	if !(msg.Source == sources.SourcePostgresContinuous || msg.Source == sources.SourcePatroniContinuous) {
 		return false
 	}
+	return mvp.IsInstanceLevel
 	return mvp.IsInstanceLevel
 }
 
@@ -585,6 +645,7 @@ func MetricGathererLoop(ctx context.Context,
 	var lastErrorNotificationTime time.Time
 	var vme DBVersionMapEntry
 	var mvp metrics.Metric
+	var mvp metrics.Metric
 	var err error
 	failedFetches := 0
 	// metricNameForStorage := metricName
@@ -599,6 +660,7 @@ func MetricGathererLoop(ctx context.Context,
 		dbPgVersionMapLock.RLock()
 		realDbname := dbPgVersionMap[dbUniqueName].RealDbname // to manage 2 sets of event counts - monitored DB + global
 		dbPgVersionMapLock.RUnlock()
+		conn := mdb.Conn
 		conn := mdb.Conn
 		metrics.ParseLogs(ctx, conn, mdb, realDbname, metricName, configMap, controlCh, storeCh) // no return
 		return
@@ -615,6 +677,9 @@ func MetricGathererLoop(ctx context.Context,
 			if err != nil {
 				l.Errorf("Could not get metric version properties: %v", err)
 				return
+			if err != nil {
+				l.Errorf("Could not get metric version properties: %v", err)
+				return
 			}
 		}
 
@@ -626,6 +691,7 @@ func MetricGathererLoop(ctx context.Context,
 			MetricName:          metricName,
 			Source:              srcType,
 			Interval:            time.Second * time.Duration(interval),
+			StmtTimeoutOverride: 0,
 			StmtTimeoutOverride: 0,
 		}
 
@@ -709,6 +775,7 @@ func MetricGathererLoop(ctx context.Context,
 }
 
 func FetchStatsDirectlyFromOS(msg MetricFetchMessage, vme DBVersionMapEntry, mvp metrics.Metric) ([]metrics.MeasurementMessage, error) {
+func FetchStatsDirectlyFromOS(msg MetricFetchMessage, vme DBVersionMapEntry, mvp metrics.Metric) ([]metrics.MeasurementMessage, error) {
 	var data []map[string]any
 	var err error
 
@@ -732,6 +799,7 @@ func FetchStatsDirectlyFromOS(msg MetricFetchMessage, vme DBVersionMapEntry, mvp
 }
 
 // data + custom tags + counters
+func DatarowsToMetricstoreMessage(data metrics.Measurements, msg MetricFetchMessage, vme DBVersionMapEntry, mvp metrics.Metric) metrics.MeasurementMessage {
 func DatarowsToMetricstoreMessage(data metrics.Measurements, msg MetricFetchMessage, vme DBVersionMapEntry, mvp metrics.Metric) metrics.MeasurementMessage {
 	md, err := GetMonitoredDatabaseByUniqueName(msg.DBUniqueName)
 	if err != nil {
@@ -908,7 +976,9 @@ func StatsServerHandler(w http.ResponseWriter, _ *http.Request) {
 		metricPointsPerMinute = int64((totalMetrics * 60) / gathererUptimeSeconds)
 	}
 	databasesConfigured := len(monitoredDbCache) // including replicas
+	databasesConfigured := len(monitoredDbCache) // including replicas
 	databasesMonitored := 0
+	for _, md := range monitoredDbCache {
 	for _, md := range monitoredDbCache {
 		if shouldDbBeMonitoredBasedOnCurrentState(md) {
 			databasesMonitored++
@@ -940,6 +1010,7 @@ func StatsSummarizer(ctx context.Context) {
 }
 
 func SyncMonitoredDBsToDatastore(ctx context.Context, monitoredDbs []*sources.MonitoredDatabase, persistenceChannel chan []metrics.MeasurementMessage) {
+func SyncMonitoredDBsToDatastore(ctx context.Context, monitoredDbs []*sources.MonitoredDatabase, persistenceChannel chan []metrics.MeasurementMessage) {
 	if len(monitoredDbs) > 0 {
 		msms := make([]metrics.MeasurementMessage, len(monitoredDbs))
 		now := time.Now()
@@ -970,6 +1041,7 @@ func SyncMonitoredDBsToDatastore(ctx context.Context, monitoredDbs []*sources.Mo
 }
 
 func shouldDbBeMonitoredBasedOnCurrentState(md *sources.MonitoredDatabase) bool {
+func shouldDbBeMonitoredBasedOnCurrentState(md *sources.MonitoredDatabase) bool {
 	return !IsDBDormant(md.DBUniqueName)
 }
 
@@ -984,6 +1056,7 @@ func ControlChannelsMapToList(controlChannels map[string]chan metrics.ControlMes
 }
 
 func CloseResourcesForRemovedMonitoredDBs(metricsWriter *sinks.MultiWriter, currentDBs, prevLoopDBs sources.MonitoredDatabases, shutDownDueToRoleChange map[string]bool) {
+func CloseResourcesForRemovedMonitoredDBs(metricsWriter *sinks.MultiWriter, currentDBs, prevLoopDBs sources.MonitoredDatabases, shutDownDueToRoleChange map[string]bool) {
 	var curDBsMap = make(map[string]bool)
 
 	for _, curDB := range currentDBs {
@@ -993,12 +1066,16 @@ func CloseResourcesForRemovedMonitoredDBs(metricsWriter *sinks.MultiWriter, curr
 	for _, prevDB := range prevLoopDBs {
 		if _, ok := curDBsMap[prevDB.DBUniqueName]; !ok { // removed from config
 			prevDB.Conn.Close()
+			prevDB.Conn.Close()
 			_ = metricsWriter.SyncMetrics(prevDB.DBUniqueName, "", "remove")
 		}
 	}
 
 	// or to be ignored due to current instance state
 	for roleChangedDB := range shutDownDueToRoleChange {
+		if db := currentDBs.GetDatabase(roleChangedDB); db != nil {
+			db.Conn.Close()
+		}
 		if db := currentDBs.GetDatabase(roleChangedDB); db != nil {
 			db.Conn.Close()
 		}
@@ -1031,6 +1108,7 @@ func SetRecoveryIgnoredDBState(dbUnique string, state bool) {
 func IsDBIgnoredBasedOnRecoveryState(dbUnique string) bool {
 	recoveryIgnoredDBsLock.RLock()
 	defer recoveryIgnoredDBsLock.RUnlock()
+	recoveryIgnored, ok := recoveryIgnoredDBs[dbUnique]
 	recoveryIgnored, ok := recoveryIgnoredDBs[dbUnique]
 	if ok {
 		return recoveryIgnored
@@ -1111,16 +1189,74 @@ func LoadMetricDefs(r metrics.Reader) (err error) {
 	metricDefinitionMap.MetricDefs = maps.Clone(metricDefs.MetricDefs)
 	metricDefinitionMap.PresetDefs = maps.Clone(metricDefs.PresetDefs)
 	metricDefMapLock.Unlock()
+// LoadMetricDefs loads metric definitions from the reader
+func LoadMetricDefs(r metrics.Reader) (err error) {
+	var metricDefs *metrics.Metrics
+	if metricDefs, err = r.GetMetrics(); err != nil {
+		return
+	}
+	metricDefMapLock.Lock()
+	metricDefinitionMap.MetricDefs = maps.Clone(metricDefs.MetricDefs)
+	metricDefinitionMap.PresetDefs = maps.Clone(metricDefs.PresetDefs)
+	metricDefMapLock.Unlock()
 	return
 }
 
 // SyncMetricDefs refreshes metric definitions at regular intervals
 func SyncMetricDefs(r metrics.Reader) {
+// SyncMetricDefs refreshes metric definitions at regular intervals
+func SyncMetricDefs(r metrics.Reader) {
 	for {
 		select {
 		case <-mainContext.Done():
+		case <-mainContext.Done():
 			return
 		case <-time.After(metricDefinitionRefreshInterval):
+			if err := LoadMetricDefs(r); err != nil {
+				logger.Errorf("Could not refresh metric definitions: %w", err)
+			}
+		}
+	}
+}
+
+func NewConfigurationReaders(opts *config.Options) (sources.ReaderWriter, metrics.ReaderWriter) {
+	checkError := func(err error) {
+		if err != nil {
+			logger.Fatal(err)
+		}
+	}
+	var (
+		sourcesReader sources.ReaderWriter
+		metricsReader metrics.ReaderWriter
+	)
+	configKind, err := opts.GetConfigKind()
+	switch {
+	case err != nil:
+		logger.Fatal(err)
+	case configKind != config.ConfigPgURL:
+		ctx := log.WithLogger(mainContext, logger.WithField("config", "files"))
+		sourcesReader, err = sources.NewYAMLSourcesReaderWriter(ctx, opts.Sources.Config)
+		checkError(err)
+		metricsReader, err = metrics.NewYAMLMetricReaderWriter(ctx, opts.Metrics.Metrics)
+	default:
+		var configDb db.PgxPoolIface
+		ctx := log.WithLogger(mainContext, logger.WithField("config", "postgres"))
+		configDb, err = db.New(ctx, opts.Sources.Config)
+		checkError(err)
+		metricsReader, err = metrics.NewPostgresMetricReaderWriter(ctx, configDb)
+		checkError(err)
+		sourcesReader, err = sources.NewPostgresSourcesReaderWriter(ctx, configDb)
+	}
+	checkError(err)
+	return sourcesReader, metricsReader
+}
+
+var (
+	// sourcesReaderWriter is used to read the monitored sources (databases, patroni clusets, pgpools, etc.) information
+	sourcesReaderWriter sources.ReaderWriter
+	// metricsReaderWriter is used to read the metric and preset definitions
+	metricsReaderWriter metrics.ReaderWriter
+)
 			if err := LoadMetricDefs(r); err != nil {
 				logger.Errorf("Could not refresh metric definitions: %w", err)
 			}
@@ -1189,6 +1325,7 @@ func main() {
 	if opts, err = config.New(os.Stdout); err != nil {
 		exitCode.Store(ExitCodeConfigError)
 		fmt.Print(err)
+		fmt.Print(err)
 		return
 	}
 	if opts.VersionOnly() {
@@ -1201,7 +1338,10 @@ func main() {
 	logger.Debugf("opts: %+v", opts)
 
 	sourcesReaderWriter, metricsReaderWriter = NewConfigurationReaders(opts)
+	sourcesReaderWriter, metricsReaderWriter = NewConfigurationReaders(opts)
 	if opts.Sources.Init {
+		// At this point we have initialised the sources, metrics and presets configurations.
+		// Any fatal errors are handled by the configuration readers. So me may exit gracefully.
 		// At this point we have initialised the sources, metrics and presets configurations.
 		// Any fatal errors are handled by the configuration readers. So me may exit gracefully.
 		return
@@ -1219,9 +1359,11 @@ func main() {
 	var metricConfig map[string]float64                       // set to host.Metrics or host.MetricsStandby (in case optional config defined and in recovery state
 
 	if err = LoadMetricDefs(metricsReaderWriter); err != nil {
+	if err = LoadMetricDefs(metricsReaderWriter); err != nil {
 		logger.Errorf("Could not load metric definitions: %w", err)
 		os.Exit(int(ExitCodeConfigError))
 	}
+	go SyncMetricDefs(metricsReaderWriter)
 	go SyncMetricDefs(metricsReaderWriter)
 
 	if measurementsWriter, err = sinks.NewMultiWriter(mainContext, opts, metricDefinitionMap); err != nil {
@@ -1231,8 +1373,8 @@ func main() {
 		go measurementsWriter.WriteMeasurements(mainContext, measurementCh)
 	}
 
-	logger.Warn("webui is disabled for debugging purposes")
-	//initWebUI(opts)
+	// logger.Warn("webui is disabled for debugging purposes")
+	initWebUI(opts)
 
 	firstLoop := true
 	mainLoopCount := 0
@@ -1242,6 +1384,7 @@ func main() {
 		var controlChannelNameList []string
 		gatherersShutDown := 0
 
+		if monitoredDbs, err = sourcesReaderWriter.GetMonitoredDatabases(); err != nil {
 		if monitoredDbs, err = sourcesReaderWriter.GetMonitoredDatabases(); err != nil {
 			if firstLoop {
 				logger.Fatal("could not fetch active hosts - check config!", err)
@@ -1255,9 +1398,14 @@ func main() {
 			logger.Error(err)
 			continue
 		}
+		if monitoredDbs, err = monitoredDbs.Expand(); err != nil {
+			logger.Error(err)
+			continue
+		}
 
 		if DoesEmergencyTriggerfileExist() {
 			logger.Warningf("Emergency pause triggerfile detected at %s, ignoring currently configured DBs", opts.Metrics.EmergencyPauseTriggerfile)
+			monitoredDbs = make([]*sources.MonitoredDatabase, 0)
 			monitoredDbs = make([]*sources.MonitoredDatabase, 0)
 		}
 
@@ -1265,13 +1413,16 @@ func main() {
 
 		if lastMonitoredDBsUpdate.IsZero() || lastMonitoredDBsUpdate.Before(time.Now().Add(-1*time.Second*monitoredDbsDatastoreSyncIntervalSeconds)) {
 			go SyncMonitoredDBsToDatastore(mainContext, monitoredDbs, measurementCh)
+			go SyncMonitoredDBsToDatastore(mainContext, monitoredDbs, measurementCh)
 			lastMonitoredDBsUpdate = time.Now()
 		}
 
 		logger.
 			WithField("sources", len(monitoredDbs)).
 			WithField("metrics", len(metricDefinitionMap.MetricDefs)).
+			WithField("metrics", len(metricDefinitionMap.MetricDefs)).
 			Log(func() logrus.Level {
+				if firstLoop && len(monitoredDbs)*len(metricDefinitionMap.MetricDefs) == 0 {
 				if firstLoop && len(monitoredDbs)*len(metricDefinitionMap.MetricDefs) == 0 {
 					return logrus.WarnLevel
 				}
@@ -1285,7 +1436,18 @@ func main() {
 				WithField("metric", monitoredDB.Metrics).
 				WithField("tags", monitoredDB.CustomTags).
 				WithField("config", monitoredDB.HostConfig).Debug()
+		for _, monitoredDB := range monitoredDbs {
+			logger.WithField("source", monitoredDB.DBUniqueName).
+				WithField("metric", monitoredDB.Metrics).
+				WithField("tags", monitoredDB.CustomTags).
+				WithField("config", monitoredDB.HostConfig).Debug()
 
+			dbUnique := monitoredDB.DBUniqueName
+			dbUniqueOrig := monitoredDB.DBUniqueNameOrig
+			srcType := monitoredDB.Kind
+
+			if monitoredDB.Connect(mainContext) != nil {
+				logger.Warningf("could not init connection, retrying on next iteration: %w", err)
 			dbUnique := monitoredDB.DBUniqueName
 			dbUniqueOrig := monitoredDB.DBUniqueNameOrig
 			srcType := monitoredDB.Kind
@@ -1296,9 +1458,50 @@ func main() {
 			}
 
 			InitPGVersionInfoFetchingLockIfNil(monitoredDB)
+			InitPGVersionInfoFetchingLockIfNil(monitoredDB)
 
 			var ver DBVersionMapEntry
+			var ver DBVersionMapEntry
 
+			ver, err = DBGetPGVersion(mainContext, dbUnique, srcType, true)
+			if err != nil {
+				logger.Errorf("could not start metric gathering for DB \"%s\" due to connection problem: %s", dbUnique, err)
+				continue
+			}
+			logger.Infof("Connect OK. [%s] is on version %s (in recovery: %v)", dbUnique, ver.VersionStr, ver.IsInRecovery)
+			if ver.IsInRecovery && monitoredDB.OnlyIfMaster {
+				logger.Infof("[%s] not added to monitoring due to 'master only' property", dbUnique)
+				continue
+			}
+			metricConfig = func() map[string]float64 {
+				if len(monitoredDB.Metrics) > 0 {
+					return monitoredDB.Metrics
+				}
+				if monitoredDB.PresetMetrics > "" {
+					return metricDefinitionMap.PresetDefs[monitoredDB.PresetMetrics].Metrics
+				}
+				return nil
+			}()
+			hostLastKnownStatusInRecovery[dbUnique] = ver.IsInRecovery
+			if ver.IsInRecovery {
+				metricConfig = func() map[string]float64 {
+					if len(monitoredDB.MetricsStandby) > 0 {
+						return monitoredDB.MetricsStandby
+					}
+					if monitoredDB.PresetMetricsStandby > "" {
+						return metricDefinitionMap.PresetDefs[monitoredDB.PresetMetricsStandby].Metrics
+					}
+					return nil
+				}()
+			}
+
+			if !opts.Ping && monitoredDB.IsPostgresSource() && !ver.IsInRecovery {
+				if opts.Metrics.NoHelperFunctions {
+					logger.Infof("[%s] skipping rollout out helper functions due to the --no-helper-functions flag ...", dbUnique)
+				} else {
+					logger.Infof("Trying to create helper functions if missing for \"%s\"...", dbUnique)
+					if err = TryCreateMetricsFetchingHelpers(monitoredDB); err != nil {
+						logger.Warningf("Failed to create helper functions for \"%s\": %w", dbUnique, err)
 			ver, err = DBGetPGVersion(mainContext, dbUnique, srcType, true)
 			if err != nil {
 				logger.Errorf("could not start metric gathering for DB \"%s\" due to connection problem: %s", dbUnique, err)
@@ -1343,6 +1546,7 @@ func main() {
 			}
 
 			if monitoredDB.IsPostgresSource() {
+			if monitoredDB.IsPostgresSource() {
 				var DBSizeMB int64
 
 				if opts.Sources.MinDbSizeMB >= 8 { // an empty DB is a bit less than 8MB
@@ -1358,8 +1562,10 @@ func main() {
 					}
 				}
 				ver, err := DBGetPGVersion(mainContext, dbUnique, monitoredDB.Kind, false)
+				ver, err := DBGetPGVersion(mainContext, dbUnique, monitoredDB.Kind, false)
 				if err == nil { // ok to ignore error, re-tried on next loop
 					lastKnownStatusInRecovery := hostLastKnownStatusInRecovery[dbUnique]
+					if ver.IsInRecovery && monitoredDB.OnlyIfMaster {
 					if ver.IsInRecovery && monitoredDB.OnlyIfMaster {
 						logger.Infof("[%s] to be removed from monitoring due to 'master only' property and status change", dbUnique)
 						hostsToShutDownDueToRoleChange[dbUnique] = true
@@ -1367,11 +1573,14 @@ func main() {
 						continue
 					} else if lastKnownStatusInRecovery != ver.IsInRecovery {
 						if ver.IsInRecovery && len(monitoredDB.MetricsStandby) > 0 {
+						if ver.IsInRecovery && len(monitoredDB.MetricsStandby) > 0 {
 							logger.Warningf("Switching metrics collection for \"%s\" to standby config...", dbUnique)
+							metricConfig = monitoredDB.MetricsStandby
 							metricConfig = monitoredDB.MetricsStandby
 							hostLastKnownStatusInRecovery[dbUnique] = true
 						} else {
 							logger.Warningf("Switching metrics collection for \"%s\" to primary config...", dbUnique)
+							metricConfig = monitoredDB.Metrics
 							metricConfig = monitoredDB.Metrics
 							hostLastKnownStatusInRecovery[dbUnique] = false
 							SetRecoveryIgnoredDBState(dbUnique, false)
@@ -1404,6 +1613,7 @@ func main() {
 				} else {
 					metricDefMapLock.RLock()
 					_, metricDefOk = metricDefinitionMap.MetricDefs[metric]
+					_, metricDefOk = metricDefinitionMap.MetricDefs[metric]
 					metricDefMapLock.RUnlock()
 				}
 
@@ -1427,6 +1637,8 @@ func main() {
 									logger.Warning("Failed to determine possible re-routing name, Grafana dashboards with re-routed metrics might not show all hosts")
 								} else if mvp.StorageName != "" {
 									metricNameForStorage = mvp.StorageName
+								} else if mvp.StorageName != "" {
+									metricNameForStorage = mvp.StorageName
 								}
 							}
 						}
@@ -1439,6 +1651,7 @@ func main() {
 					}
 				} else if (!metricDefOk && chOk) || interval <= 0 {
 					// metric definition files were recently removed or interval set to zero
+					logger.Warning("shutting down metric", metric, "for", monitoredDB.DBUniqueName)
 					logger.Warning("shutting down metric", metric, "for", monitoredDB.DBUniqueName)
 					controlChannels[dbMetric] <- metrics.ControlMessage{Action: gathererStatusStop}
 					delete(controlChannels, dbMetric)
@@ -1476,6 +1689,7 @@ func main() {
 		for _, dbMetric := range controlChannelNameList {
 			var currentMetricConfig map[string]float64
 			var dbInfo *sources.MonitoredDatabase
+			var dbInfo *sources.MonitoredDatabase
 			var ok, dbRemovedFromConfig bool
 			singleMetricDisabled := false
 			splits := strings.Split(dbMetric, dbMetricJoinStr)
@@ -1501,6 +1715,9 @@ func main() {
 				if !ok {
 					logger.Warningf("Could not find PG version info for DB %s, skipping shutdown check of metric worker process for %s", db, metric)
 					continue
+				}
+				if verInfo.IsInRecovery && dbInfo.PresetMetricsStandby > "" || !verInfo.IsInRecovery && dbInfo.PresetMetrics > "" {
+					continue // no need to check presets for single metric disabling
 				}
 				if verInfo.IsInRecovery && dbInfo.PresetMetricsStandby > "" || !verInfo.IsInRecovery && dbInfo.PresetMetrics > "" {
 					continue // no need to check presets for single metric disabling
@@ -1540,6 +1757,7 @@ func main() {
 	MainLoopSleep:
 		mainLoopCount++
 		prevLoopMonitoredDBs = slices.Clone(monitoredDbs)
+		prevLoopMonitoredDBs = slices.Clone(monitoredDbs)
 
 		logger.Debugf("main sleeping %ds...", opts.Sources.Refresh)
 		select {
@@ -1547,6 +1765,16 @@ func main() {
 			// pass
 		case <-mainContext.Done():
 			return
+		}
+	}
+}
+
+func initWebUI(opts *config.Options) {
+	if !opts.Ping {
+		uifs, _ := fs.Sub(webuifs, "webui/build")
+		ui := webserver.Init(opts.WebUI, uifs, metricsReaderWriter, sourcesReaderWriter, logger)
+		if ui == nil {
+			os.Exit(int(ExitCodeWebUIError))
 		}
 	}
 }
